@@ -40,17 +40,18 @@ import Mima._
 import Unidoc._
 
 // Scala versions
-val scala213 = "2.13.16"
-val all_scala_versions = Seq(scala213)
+val scala212 = "2.12.18"
+val scala213 = "2.13.13"
+val all_scala_versions = Seq(scala212, scala213)
 
 // Due to how publishArtifact is determined for javaOnlyReleaseSettings, incl. storage
 // It was necessary to change default_scala_version to scala213 in build.sbt
 // to build the project with Scala 2.13 only
 // As a setting, it's possible to set it on command line easily
-// sbt 'set default_scala_version := 2.13.16' [commands]
+// sbt 'set default_scala_version := 2.13.13' [commands]
 // FIXME Why not use scalaVersion?
 val default_scala_version = settingKey[String]("Default Scala version")
-Global / default_scala_version := scala213
+Global / default_scala_version := scala212
 
 val LATEST_RELEASED_SPARK_VERSION = "3.5.7"
 val SPARK_MASTER_VERSION = "4.0.2-SNAPSHOT"
@@ -334,7 +335,7 @@ lazy val connectClient = (project in file("spark-connect/client"))
       if (!distributionDir.exists()) {
         val jarsDir = distributionDir / "jars"
         IO.createDirectory(jarsDir)
-        // Create symlinks for all dependencies
+        // Create symlinks for all dependencies.
         serverClassPath.distinct.foreach { entry =>
           val jarFile = entry.data.toPath
           val linkedJarFile = jarsDir / entry.data.getName
@@ -350,8 +351,6 @@ lazy val connectClient = (project in file("spark-connect/client"))
       // Return the location of the distribution directory.
       "-Ddelta.spark.home=" + distributionDir
     },
-    // Required for testing addFeatureSupport/dropFeatureSupport.
-    Test / envVars += ("DELTA_TESTING", "1"),
   )
 
 lazy val connectServer = (project in file("spark-connect/server"))
@@ -404,8 +403,6 @@ lazy val connectServer = (project in file("spark-connect/server"))
       // needed for the client. Including it causes classpath problems.
       ExclusionRule("org.apache.spark", "spark-connect-shims_2.13")
     ),
-    // Required for testing addFeatureSupport/dropFeatureSupport.
-    Test / envVars += ("DELTA_TESTING", "1"),
   )
 
 lazy val deltaSuiteGenerator = (project in file("spark/delta-suite-generator"))
@@ -538,6 +535,7 @@ lazy val sparkV1Filtered = (project in file("spark-v1-filtered"))
 // ============================================================
 lazy val sparkV2 = (project in file("kernel-spark"))
   .dependsOn(sparkV1Filtered)
+  .dependsOn(kernelApi)
   .dependsOn(kernelDefaults)
   .dependsOn(goldenTables % "test")
   .settings(
@@ -548,15 +546,6 @@ lazy val sparkV2 = (project in file("kernel-spark"))
     exportJars := true,  // Export as JAR to avoid classpath conflicts
 
     Test / javaOptions ++= Seq("-ea"),
-    // make sure shaded kernel-api jar exists before compiling/testing
-    Compile / compile := (Compile / compile)
-      .dependsOn(kernelApi / Compile / packageBin).value,
-    Test / test := (Test / test)
-      .dependsOn(kernelApi / Compile / packageBin).value,
-    Test / unmanagedJars += (kernelApi / Test / packageBin).value,
-    Compile / unmanagedJars ++= Seq(
-      (kernelApi / Compile / packageBin).value
-    ),
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
@@ -583,7 +572,7 @@ lazy val sparkV2 = (project in file("kernel-spark"))
 // ============================================================
 lazy val spark = (project in file("spark-unified"))
   .dependsOn(sparkV1)
-  .dependsOn(sparkV2)
+//  .dependsOn(sparkV2) TODO: add back when kernel is back ported
   .dependsOn(storage)
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
@@ -634,7 +623,7 @@ lazy val spark = (project in file("spark-unified"))
       val pythonMappings = listPythonFiles(baseDirectory.value.getParentFile / "python")
 
       // Combine all mappings
-      val allMappings = v1Mappings ++ v2Mappings ++ pythonMappings
+       val allMappings = v1Mappings ++ v2Mappings ++ pythonMappings
 
       // Detect duplicate class files
       val classFiles = allMappings.filter(_._2.endsWith(".class"))
@@ -815,11 +804,6 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     Compile / classDirectory := target.value / "scala-2.13" / "kernel-api-classes",
 
     Test / javaOptions ++= Seq("-ea"),
-
-    // Also publish a test-jar (classifier = "tests") so consumers (e.g. kernelDefault)
-    // can depend on test utilities via a published artifact instead of depending on raw class directories.
-    Test / publishArtifact := true,
-    Test / packageBin / artifactClassifier := Some("tests"),
     libraryDependencies ++= Seq(
       "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
       "org.slf4j" % "slf4j-api" % "1.7.36",
@@ -828,9 +812,6 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "com.fasterxml.jackson.core" % "jackson-core" % "2.13.5",
       "com.fasterxml.jackson.core" % "jackson-annotations" % "2.13.5",
       "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.13.5",
-
-      // JSR-305 annotations for @Nullable
-      "com.google.code.findbugs" % "jsr305" % "3.0.2",
 
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "junit" % "junit" % "4.13.2" % "test",
@@ -903,6 +884,8 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
 
 lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
   .enablePlugins(ScalafmtPlugin)
+  .dependsOn(kernelApi)
+  .dependsOn(kernelApi % "test->test")
   .dependsOn(storage)
   .dependsOn(storage % "test->test") // Required for InMemoryCommitCoordinator for tests
   .dependsOn(goldenTables % "test")
@@ -921,18 +904,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     Test / javaOptions ++= Seq("-ea"),
     // This allows generating tables with unsupported test table features in delta-spark
     Test / envVars += ("DELTA_TESTING", "1"),
-
-    // Put the shaded kernel-api JAR on the classpath (compile & test)
-    Compile / unmanagedJars += (kernelApi / Compile / packageBin).value,
-    Test / unmanagedJars += (kernelApi / Compile / packageBin).value,
-
-    // Make sure the shaded JAR is produced before we compile/run tests
-    Compile / compile := (Compile / compile).dependsOn(kernelApi / Compile / packageBin).value,
-    Test / test       := (Test    / test).dependsOn(kernelApi / Compile / packageBin).value,
-    Test / unmanagedJars += (kernelApi / Test / packageBin).value,
-
     libraryDependencies ++= Seq(
-      "org.assertj" % "assertj-core" % "3.26.3" % Test,
       "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion,
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
       "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.13.5",

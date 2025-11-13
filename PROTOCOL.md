@@ -275,9 +275,7 @@ These files reside in the `_delta_log/_sidecars` directory.
 
 ### Log Compaction Files
 
-Log compaction files reside in the `_delta_log` directory. A log compaction
-file from a start version `x` to an end version `y` (`y` must be _greater_ than `x`)
-will have the following name:
+Log compaction files reside in the `_delta_log` directory. A log compaction file from a start version `x` to an end version `y` will have the following name:
 `<x>.<y>.compacted.json`. This contains the aggregated
 actions for commit range `[x, y]`. Similar to commits, each row in the log
 compaction file represents an [action](#actions).
@@ -844,7 +842,6 @@ To achieve the requirements above, related actions from different delta files ne
  - The latest `metaData` action seen wins
  - For `txn` actions, the latest `version` seen for a given `appId` wins
  - For `domainMetadata`, the latest `domainMetadata` seen for a given `domain` wins. The actions with `removed=true` act as tombstones to suppress earlier versions. Snapshot reads do _not_ return removed `domainMetadata` actions.
- - For `commitInfo` actions, only the `commitInfo` from the commit at the snapshot version is included in the snapshot. [Checkpoints](#checkpoints) and [log compaction files](#log-compaction-files) do not preserve `commitInfo` actions, so this information must be read from the JSON commit file at the snapshot version.
  - Logical files in a table are identified by their `(path, deletionVector.uniqueId)` primary key. File actions (`add` or `remove`) reference logical files, and a log can contain any number of references to a single file.
  - To replay the log, scan all file actions and keep only the newest reference for each logical file.
  - `add` actions in the result identify logical files currently present in the table (for queries). `remove` actions in the result identify tombstones of logical files no longer present in the table (for VACUUM).
@@ -1520,7 +1517,7 @@ Field Name | optional/required | Description
 `fieldPath`| optional | When updating the type of a map key/value or array element only: the path from the struct field holding the metadata to the map key/value or array element that was updated.
 
 The `fieldPath` value is "key", "value" and "element"  when updating resp. the type of a map key, map value and array element.
-The `fieldPath` value for nested maps and nested arrays are prefixed by their parents' path, separated by dots.
+The `fieldPath` value for nested maps and nested arrays are prefixed by their parents's path, separated by dots.
 
 The following is an example for the definition of a column that went through two type changes:
 ```json
@@ -1833,9 +1830,11 @@ The following steps could be used to do cleanup of the DeltaLog directory:
 midnight UTC of that day as `cutOffTimestamp`. The newest commit not newer than the `cutOffTimestamp` is
 the `cutoffCommit`, because a commit exactly at midnight is an acceptable cutoff. We want to retain everything including and after the `cutoffCommit`.
 2. Identify the newest checkpoint that is not newer than the `cutOffCommit`. A checkpoint at the `cutOffCommit` is ideal, but an older one will do. Lets call it `cutOffCheckpoint`.
-We need to preserve the `cutOffCheckpoint` (both the checkpoint file and the JSON commit file at that version) and all commits after it. The JSON commit file at the `cutOffCheckpoint` version must be preserved because checkpoints do not preserve [commit provenance information](#commit-provenance-information) (e.g., `commitInfo` actions), which may be required by table features such as [In-Commit Timestamps](#in-commit-timestamps). All commits after `cutOffCheckpoint` must be preserved to enable time travel for commits between `cutOffCheckpoint` and the next available checkpoint.
+We need to preserve the `cutOffCheckpoint` and all commits after it, because we need them to enable
+time travel for commits between `cutOffCheckpoint` and the next available checkpoint.
 3. Delete all [delta log entries](#delta-log-entries) and [checkpoint files](#checkpoints) before the
-`cutOffCheckpoint` checkpoint. Also delete all the [log compaction files](#log-compaction-files) having startVersion <= `cutOffCheckpoint`'s version.
+`cutOffCheckpoint` checkpoint. Also delete all the [log compaction files](#log-compaction-files) having
+startVersion <= `cutOffCheckpoint`'s version.
 4. Now read all the available [checkpoints](#checkpoints-1) in the _delta_log directory and identify
 the corresponding [sidecar files](#sidecar-files). These sidecar files need to be protected.
 5. List all the files in `_delta_log/_sidecars` directory, preserve files that are less than a day
@@ -1931,7 +1930,6 @@ When enabled:
 - The `metadata` for the column in the table schema MAY contain the key `CURRENT_DEFAULT`.
 - The value of `CURRENT_DEFAULT` SHOULD be parsed as a SQL expression.
 - Writers MUST enforce that before writing any rows to the table, for each such requested row that lacks any explicit value (including NULL) for columns with default values, the writing system will assign the result of evaluating the default value expression for each such column as the value for that column in the row. By the same token, if the engine specified the explicit `DEFAULT` SQL keyword for any column, the expression result must be substituted in the same way.
-- All columns of `variant` type must default to null.
 
 ## Identity Columns
 
@@ -2132,7 +2130,6 @@ It is highly recommended that modern writers adjust the timestamp to UTC and sto
 ## Schema Serialization Format
 
 Delta uses a subset of Spark SQL's JSON Schema representation to record the schema of a table in the transaction log.
-All column names must be unique regardless of casing.
 A reference implementation can be found in [the catalyst package of the Apache Spark repository](https://github.com/apache/spark/tree/master/sql/catalyst/src/main/scala/org/apache/spark/sql/types).
 
 ### Primitive Types
